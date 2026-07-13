@@ -1,0 +1,67 @@
+# Auto-update RELEASE workflow.
+#
+# This file does NOT belong in this (private) source repo. Copy it into the
+# PUBLIC releases repo at .github/workflows/release.yml — it runs there, builds
+# the app from the private source, signs it, and publishes a GitHub Release
+# (with latest.json) that the installed apps auto-update from.
+#
+# Trigger it manually: Actions -> release -> Run workflow -> enter the version
+# tag (must match the version in src-tauri/tauri.conf.json, e.g. v0.1.1).
+
+name: release
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag, e.g. v0.1.1 (match tauri.conf.json version)"
+        required: true
+
+jobs:
+  release:
+    permissions:
+      contents: write # create the release in THIS (public) repo
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            args: "--target universal-apple-darwin"
+          - platform: windows-latest
+            args: ""
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Checkout private source
+        uses: actions/checkout@v4
+        with:
+          repository: ngroat7007/Claude-
+          ref: claude/tauri-desktop-r2-sync-4szxxk
+          token: ${{ secrets.SOURCE_TOKEN }} # read-only PAT for the private repo
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build, sign & publish release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # publishes to THIS public repo
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ inputs.version }}
+          releaseName: "SLR Data Sync ${{ inputs.version }}"
+          releaseBody: "Automatic update."
+          releaseDraft: false
+          prerelease: false
+          args: ${{ matrix.args }}
